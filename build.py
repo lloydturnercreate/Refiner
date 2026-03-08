@@ -71,6 +71,8 @@ def build():
 
     if system == "Darwin":
         args.append("--windowed")
+        # Build a universal2 binary that runs on both Intel and Apple Silicon
+        args += ["--target-arch", "universal2"]
     else:
         args.append("--onefile")
 

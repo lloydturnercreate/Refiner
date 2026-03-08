@@ -3,15 +3,15 @@ name: Build & Release
 on:
   push:
     tags:
-      - "v*.*.*"   # triggers on tags like v1.0.0, v1.2.3, etc.
+      - "v*.*.*"
 
 permissions:
-  contents: write  # needed to create GitHub Releases and upload assets
+  contents: write
 
 jobs:
-  build-macos-arm:
-    name: Build macOS (Apple Silicon)
-    runs-on: macos-14   # Apple Silicon (M1/M2/M3)
+  build-macos:
+    name: Build macOS (Universal)
+    runs-on: macos-14   # Apple Silicon — builds universal2 binary for Intel + Apple Silicon
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -33,45 +33,13 @@ jobs:
       - name: Zip app bundle
         run: |
           cd dist
-          zip -r Refiner-macOS-AppleSilicon.zip Refiner.app
+          zip -r Refiner-macOS.zip Refiner.app
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Refiner-macOS-AppleSilicon
-          path: dist/Refiner-macOS-AppleSilicon.zip
-
-  build-macos-intel:
-    name: Build macOS (Intel)
-    runs-on: macos-13   # Intel x86_64
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-
-      - name: Install system dependencies
-        run: brew install ffmpeg pngquant
-
-      - name: Install Python dependencies
-        run: pip install -r requirements-dev.txt
-
-      - name: Build
-        run: python3 build.py
-
-      - name: Zip app bundle
-        run: |
-          cd dist
-          zip -r Refiner-macOS-Intel.zip Refiner.app
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Refiner-macOS-Intel
-          path: dist/Refiner-macOS-Intel.zip
+          name: Refiner-macOS
+          path: dist/Refiner-macOS.zip
 
   build-windows:
     name: Build Windows
@@ -105,18 +73,13 @@ jobs:
 
   release:
     name: Create GitHub Release
-    needs: [build-macos-arm, build-macos-intel, build-windows]
+    needs: [build-macos, build-windows]
     runs-on: ubuntu-latest
     steps:
-      - name: Download Apple Silicon artifact
+      - name: Download macOS artifact
         uses: actions/download-artifact@v4
         with:
-          name: Refiner-macOS-AppleSilicon
-
-      - name: Download Intel artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: Refiner-macOS-Intel
+          name: Refiner-macOS
 
       - name: Download Windows artifact
         uses: actions/download-artifact@v4
@@ -130,8 +93,7 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            Refiner-macOS-AppleSilicon.zip
-            Refiner-macOS-Intel.zip
+            Refiner-macOS.zip
             Refiner-Windows.zip
           body: |
             ## Refiner ${{ github.ref_name }}
@@ -140,18 +102,14 @@ jobs:
 
             | Platform | File |
             |----------|------|
-            | macOS — M1/M2/M3/M4 (Apple Silicon) | `Refiner-macOS-AppleSilicon.zip` |
-            | macOS — older Intel Mac | `Refiner-macOS-Intel.zip` |
+            | macOS (Intel + Apple Silicon) | `Refiner-macOS.zip` — extract and run `Refiner.app` |
             | Windows | `Refiner-Windows.zip` — extract and run `Refiner.exe` |
-
-            Not sure which Mac you have? Apple menu → About This Mac. If it says **Apple M1/M2/M3/M4**, download Apple Silicon. If it says **Intel**, download Intel.
 
             ### First Launch (macOS)
             macOS will warn the app is from an unidentified developer. **Right-click → Open** to bypass this once.
 
             ### Requirements
 
-            Users need the following installed on their machine:
             - **FFmpeg** (required for video operations)
               - macOS: `brew install ffmpeg`
               - Windows: [ffmpeg.org](https://ffmpeg.org/download.html) or `choco install ffmpeg`
