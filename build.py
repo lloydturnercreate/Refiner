@@ -88,14 +88,12 @@ def build():
         "cairosvg",
         "cairocffi",
         "ffmpeg",
-        "imageio_ffmpeg",
     ]
     for h in hidden:
         args += ["--hidden-import", h]
 
-    # Collect these packages in full so all data files / themes / binaries are included
-    for pkg in ["imageio_ffmpeg", "customtkinter"]:
-        args += ["--collect-all", pkg]
+    # Collect customtkinter in full so all theme/data files are included
+    args += ["--collect-all", "customtkinter"]
 
     print("Running PyInstaller…")
     result = subprocess.run(args, check=False)
