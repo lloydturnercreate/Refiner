@@ -71,8 +71,6 @@ def build():
 
     if system == "Darwin":
         args.append("--windowed")
-        # Build a universal2 binary that runs on both Intel and Apple Silicon
-        args += ["--target-arch", "universal2"]
     else:
         args.append("--onefile")
 
@@ -90,9 +88,13 @@ def build():
         "cairosvg",
         "cairocffi",
         "ffmpeg",
+        "imageio_ffmpeg",
     ]
     for h in hidden:
         args += ["--hidden-import", h]
+
+    # Collect imageio_ffmpeg in full so its bundled ffmpeg binary is included
+    args += ["--collect-all", "imageio_ffmpeg"]
 
     print("Running PyInstaller…")
     result = subprocess.run(args, check=False)

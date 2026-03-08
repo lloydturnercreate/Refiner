@@ -10,8 +10,8 @@ permissions:
 
 jobs:
   build-macos:
-    name: Build macOS (Universal)
-    runs-on: macos-14   # Apple Silicon — builds universal2 binary for Intel + Apple Silicon
+    name: Build macOS
+    runs-on: macos-14   # Apple Silicon (M1/M2/M3/M4)
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -20,9 +20,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-
-      - name: Install system dependencies
-        run: brew install ffmpeg pngquant
 
       - name: Install Python dependencies
         run: pip install -r requirements-dev.txt
@@ -52,9 +49,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-
-      - name: Install FFmpeg
-        run: choco install ffmpeg -y
 
       - name: Install Python dependencies
         run: pip install -r requirements-dev.txt
@@ -102,17 +96,18 @@ jobs:
 
             | Platform | File |
             |----------|------|
-            | macOS (Intel + Apple Silicon) | `Refiner-macOS.zip` — extract and run `Refiner.app` |
-            | Windows | `Refiner-Windows.zip` — extract and run `Refiner.exe` |
+            | macOS (Apple Silicon — M1/M2/M3/M4) | `Refiner-macOS.zip` |
+            | Windows | `Refiner-Windows.zip` |
 
-            ### First Launch (macOS)
-            macOS will warn the app is from an unidentified developer. **Right-click → Open** to bypass this once.
+            **No additional software required.** FFmpeg is bundled inside the app.
 
-            ### Requirements
+            ### Installing on macOS
+            1. Download `Refiner-macOS.zip` and unzip it
+            2. Move `Refiner.app` to your Applications folder
+            3. **Right-click → Open** (first launch only — macOS flags apps from independent developers)
+            4. Click **Open** in the dialog that appears
+            5. From then on, double-click opens it normally
 
-            - **FFmpeg** (required for video operations)
-              - macOS: `brew install ffmpeg`
-              - Windows: [ffmpeg.org](https://ffmpeg.org/download.html) or `choco install ffmpeg`
-            - **pngquant** (optional, better PNG compression)
-              - macOS: `brew install pngquant`
-              - Windows: [pngquant.org](https://pngquant.org/) or `choco install pngquant`
+            ### Installing on Windows
+            1. Download `Refiner-Windows.zip` and unzip it
+            2. Double-click `Refiner.exe` to run
