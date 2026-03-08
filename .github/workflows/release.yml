@@ -1,0 +1,120 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"   # triggers on tags like v1.0.0, v1.2.3, etc.
+
+permissions:
+  contents: write  # needed to create GitHub Releases and upload assets
+
+jobs:
+  build-macos:
+    name: Build macOS
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install system dependencies
+        run: brew install ffmpeg pngquant
+
+      - name: Install Python dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Build
+        run: python3 build.py
+
+      - name: Zip app bundle
+        run: |
+          cd dist
+          zip -r Refiner-macOS.zip Refiner.app
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Refiner-macOS
+          path: dist/Refiner-macOS.zip
+
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install FFmpeg
+        run: choco install ffmpeg -y
+
+      - name: Install Python dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Build
+        run: python build.py
+
+      - name: Zip executable
+        run: Compress-Archive -Path dist\Refiner.exe -DestinationPath dist\Refiner-Windows.zip
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Refiner-Windows
+          path: dist/Refiner-Windows.zip
+
+  release:
+    name: Create GitHub Release
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Refiner-macOS
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Refiner-Windows
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Refiner ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          files: |
+            Refiner-macOS.zip
+            Refiner-Windows.zip
+          body: |
+            ## Refiner ${{ github.ref_name }}
+
+            ### Download
+
+            | Platform | File |
+            |----------|------|
+            | macOS | `Refiner-macOS.zip` — extract and run `Refiner.app` |
+            | Windows | `Refiner-Windows.zip` — extract and run `Refiner.exe` |
+
+            ### Requirements
+
+            Users need the following installed on their machine:
+            - **FFmpeg** (required for video operations)
+              - macOS: `brew install ffmpeg`
+              - Windows: [ffmpeg.org](https://ffmpeg.org/download.html) or `choco install ffmpeg`
+            - **pngquant** (optional, better PNG compression)
+              - macOS: `brew install pngquant`
+              - Windows: [pngquant.org](https://pngquant.org/) or `choco install pngquant`
+
+            ### macOS Note
+            On first launch, macOS may warn the app is from an unidentified developer.
+            Right-click → Open to bypass this once.
