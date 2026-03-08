@@ -65,16 +65,14 @@ def build():
         "--name", APP_NAME,
         "--clean",
         "--noconfirm",
-        # Bundle everything into a single file on Windows/Linux; .app bundle on macOS
-        "--onefile" if system != "Darwin" else "--windowed",
-        # Include the assets folder so bg.png and any icons are available at runtime
         f"--add-data=assets{os.pathsep}assets",
         ENTRY_POINT,
     ]
 
     if system == "Darwin":
-        # macOS: produce a proper .app bundle
-        args[args.index("--onefile" if system != "Darwin" else "--windowed")] = "--windowed"
+        args.append("--windowed")
+    else:
+        args.append("--onefile")
 
     icon = find_icon()
     if icon:

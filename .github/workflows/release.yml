@@ -9,9 +9,9 @@ permissions:
   contents: write  # needed to create GitHub Releases and upload assets
 
 jobs:
-  build-macos:
-    name: Build macOS
-    runs-on: macos-latest
+  build-macos-arm:
+    name: Build macOS (Apple Silicon)
+    runs-on: macos-14   # Apple Silicon (M1/M2/M3)
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -33,13 +33,45 @@ jobs:
       - name: Zip app bundle
         run: |
           cd dist
-          zip -r Refiner-macOS.zip Refiner.app
+          zip -r Refiner-macOS-AppleSilicon.zip Refiner.app
 
-      - name: Upload macOS artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Refiner-macOS
-          path: dist/Refiner-macOS.zip
+          name: Refiner-macOS-AppleSilicon
+          path: dist/Refiner-macOS-AppleSilicon.zip
+
+  build-macos-intel:
+    name: Build macOS (Intel)
+    runs-on: macos-13   # Intel x86_64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install system dependencies
+        run: brew install ffmpeg pngquant
+
+      - name: Install Python dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Build
+        run: python3 build.py
+
+      - name: Zip app bundle
+        run: |
+          cd dist
+          zip -r Refiner-macOS-Intel.zip Refiner.app
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Refiner-macOS-Intel
+          path: dist/Refiner-macOS-Intel.zip
 
   build-windows:
     name: Build Windows
@@ -65,7 +97,7 @@ jobs:
       - name: Zip executable
         run: Compress-Archive -Path dist\Refiner.exe -DestinationPath dist\Refiner-Windows.zip
 
-      - name: Upload Windows artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: Refiner-Windows
@@ -73,13 +105,18 @@ jobs:
 
   release:
     name: Create GitHub Release
-    needs: [build-macos, build-windows]
+    needs: [build-macos-arm, build-macos-intel, build-windows]
     runs-on: ubuntu-latest
     steps:
-      - name: Download macOS artifact
+      - name: Download Apple Silicon artifact
         uses: actions/download-artifact@v4
         with:
-          name: Refiner-macOS
+          name: Refiner-macOS-AppleSilicon
+
+      - name: Download Intel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Refiner-macOS-Intel
 
       - name: Download Windows artifact
         uses: actions/download-artifact@v4
@@ -93,7 +130,8 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            Refiner-macOS.zip
+            Refiner-macOS-AppleSilicon.zip
+            Refiner-macOS-Intel.zip
             Refiner-Windows.zip
           body: |
             ## Refiner ${{ github.ref_name }}
@@ -102,8 +140,14 @@ jobs:
 
             | Platform | File |
             |----------|------|
-            | macOS | `Refiner-macOS.zip` — extract and run `Refiner.app` |
+            | macOS — M1/M2/M3/M4 (Apple Silicon) | `Refiner-macOS-AppleSilicon.zip` |
+            | macOS — older Intel Mac | `Refiner-macOS-Intel.zip` |
             | Windows | `Refiner-Windows.zip` — extract and run `Refiner.exe` |
+
+            Not sure which Mac you have? Apple menu → About This Mac. If it says **Apple M1/M2/M3/M4**, download Apple Silicon. If it says **Intel**, download Intel.
+
+            ### First Launch (macOS)
+            macOS will warn the app is from an unidentified developer. **Right-click → Open** to bypass this once.
 
             ### Requirements
 
@@ -114,7 +158,3 @@ jobs:
             - **pngquant** (optional, better PNG compression)
               - macOS: `brew install pngquant`
               - Windows: [pngquant.org](https://pngquant.org/) or `choco install pngquant`
-
-            ### macOS Note
-            On first launch, macOS may warn the app is from an unidentified developer.
-            Right-click → Open to bypass this once.
