@@ -93,8 +93,9 @@ def build():
     for h in hidden:
         args += ["--hidden-import", h]
 
-    # Collect imageio_ffmpeg in full so its bundled ffmpeg binary is included
-    args += ["--collect-all", "imageio_ffmpeg"]
+    # Collect these packages in full so all data files / themes / binaries are included
+    for pkg in ["imageio_ffmpeg", "customtkinter"]:
+        args += ["--collect-all", pkg]
 
     print("Running PyInstaller…")
     result = subprocess.run(args, check=False)
