@@ -12,7 +12,7 @@ from fractions import Fraction
 try:
     import cairosvg
     SVG_AVAILABLE = True
-except ImportError:
+except (ImportError, OSError):
     SVG_AVAILABLE = False
     cairosvg = None
 
