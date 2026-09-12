@@ -145,6 +145,21 @@
     flex-shrink: 0;
   }
 
+  .install-note {
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+    margin-bottom: 48px;
+  }
+
+  .install-note code {
+    font-family: 'SF Mono', Menlo, monospace;
+    font-size: 11px;
+    background: var(--feature-bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+
   .features {
     display: flex;
     flex-direction: column;
@@ -239,6 +254,8 @@
       GitHub
     </a>
   </div>
+
+  <p class="install-note">macOS may block the first launch — right-click the app, choose Open, then click Open again. Or run <code>xattr -cr Refiner.app</code> in Terminal.</p>
 
   <div class="features">
     <div class="feature">
