@@ -34,28 +34,42 @@ WINDOW_RESIZABLE = False
 APPEARANCE_MODE = "dark"
 COLOR_THEME = "dark-blue"
 
-# Apple-inspired dark palette
-BACKGROUND_PRIMARY = "#000000"      # Pure black window bg
-BACKGROUND_SECONDARY = "#1C1C1E"    # Dark grouped background
-SURFACE_PRIMARY = "#1C1C1E"         # Card background
-SURFACE_SECONDARY = "#2C2C2E"       # Input / secondary surface
-SURFACE_ELEVATED = "#3A3A3C"        # Hover / raised elements
+# macOS-native dark palette
+BACKGROUND_PRIMARY = "#2D2D30"      # Window background
+BACKGROUND_SECONDARY = "#2D2D30"    # Same — no card distinction
+SURFACE_PRIMARY = "#2D2D30"         # Flat (invisible cards)
+SURFACE_SECONDARY = "#3A3A3C"       # Input / control backgrounds
+SURFACE_ELEVATED = "#444446"        # Hover / raised elements
+PREVIEW_BACKGROUND = "#222224"      # Dark inset for preview area
 
 # Text
 TEXT_PRIMARY = "#FFFFFF"
-TEXT_SECONDARY = "#8E8E93"          # Apple secondary label
+TEXT_SECONDARY = "#98989D"          # macOS secondary label
 TEXT_MUTED = "#636366"              # Tertiary label
+TEXT_INFO = "#4A4A4E"               # Conversion info, subtle
 
-# Accent
-ACCENT_PRIMARY = "#FF6600"          # Orange
-ACCENT_SECONDARY = "#E05500"        # Darker orange hover
-ACCENT_SUCCESS = "#32D74B"          # iOS green
-ACCENT_WARNING = "#FF9F0A"          # iOS amber
-ACCENT_ERROR = "#FF453A"            # iOS red
+# Accent — used sparingly
+ACCENT_PRIMARY = "#FF6600"          # Orange (logo, action button, slider, progress)
+ACCENT_SECONDARY = "#E85D00"        # Darker orange hover
+ACCENT_SUCCESS = "#30D158"          # macOS green
+ACCENT_WARNING = "#FF9F0A"          # macOS amber
+ACCENT_ERROR = "#FF453A"            # macOS red
 
 # Borders / separators
-BORDER_PRIMARY = "#38383A"          # Apple hairline separator
-BORDER_SECONDARY = "#48484A"
+BORDER_PRIMARY = "#3A3A3C"          # Subtle separator
+BORDER_SECONDARY = "#3F3F41"        # Button border
+
+# Tab control (native gray, no accent)
+TAB_BG = "#373739"
+TAB_SELECTED = "#444446"
+TAB_UNSELECTED = "#373739"
+TAB_TEXT_ACTIVE = "#FFFFFF"
+TAB_TEXT_INACTIVE = "#7C7C80"
+
+# Ghost buttons (Browse)
+GHOST_BG = "#3A3A3C"
+GHOST_HOVER = "#444446"
+GHOST_TEXT = "#AEAEB2"
 
 # Typography
 import platform as _platform
@@ -81,10 +95,10 @@ SPACING_XL = 32
 SPACING_XXL = 40
 
 # Border radius
-RADIUS_SM = 6
-RADIUS_MD = 8
-RADIUS_LG = 12
-RADIUS_XL = 16
+RADIUS_SM = 4
+RADIUS_MD = 6
+RADIUS_LG = 8
+RADIUS_XL = 10
 
 # File dialog settings
 DEFAULT_EXTENSION = ".png"

@@ -20,7 +20,7 @@ from constants import (
     IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, DEFAULT_FPS, MAX_FPS,
     FFMPEG_CRF, FFMPEG_PRESET, WEBM_CRF
 )
-from utils import normalize_extension, get_file_type
+from utils import normalize_extension, get_file_type, get_ffmpeg_path, get_ffprobe_path, tracked_run, tracked_ffmpeg_run
 
 
 class ConversionError(Exception):
@@ -109,8 +109,8 @@ class VideoConverter(BaseConverter):
                 f"[s0]palettegen[p];"
                 f"[s1][p]paletteuse"
             )
-            result = subprocess.run(
-                ["ffmpeg", "-i", input_path, "-vf", vf, "-loop", "0", "-y", output_path],
+            tracked_run(
+                [get_ffmpeg_path(), "-i", input_path, "-vf", vf, "-loop", "0", "-y", output_path],
                 check=True, capture_output=True, timeout=120,
             )
         except subprocess.CalledProcessError as e:
@@ -121,12 +121,8 @@ class VideoConverter(BaseConverter):
     def _convert_to_webm(self, input_path: str, output_path: str) -> None:
         """Convert a video to WebM (VP9)."""
         try:
-            ffmpeg.input(input_path).output(
-                output_path, 
-                vcodec='libvpx-vp9', 
-                crf=WEBM_CRF, 
-                b='0'
-            ).run(overwrite_output=True, capture_stdout=True, capture_stderr=True)
+            tracked_ffmpeg_run(ffmpeg.input(input_path).output(
+                output_path, vcodec='libvpx-vp9', crf=WEBM_CRF, b='0'))
         except ffmpeg.Error as e:
             raise ConversionError(f"WebM conversion failed: {str(e)}")
     
@@ -135,30 +131,19 @@ class VideoConverter(BaseConverter):
         try:
             codec = self._get_video_codec(input_path)
             if codec == "h264":
-                ffmpeg.input(input_path).output(
-                    output_path, 
-                    codec='copy'
-                ).run(overwrite_output=True, capture_stdout=True, capture_stderr=True)
+                tracked_ffmpeg_run(ffmpeg.input(input_path).output(
+                    output_path, codec='copy'))
             else:
-                ffmpeg.input(input_path).output(
-                    output_path, 
-                    vcodec='libx264', 
-                    crf=FFMPEG_CRF, 
-                    preset=FFMPEG_PRESET
-                ).run(overwrite_output=True, capture_stdout=True, capture_stderr=True)
-                
+                tracked_ffmpeg_run(ffmpeg.input(input_path).output(
+                    output_path, vcodec='libx264', crf=FFMPEG_CRF, preset=FFMPEG_PRESET))
         except ffmpeg.Error as e:
             raise ConversionError(f"MOV conversion failed: {str(e)}")
     
     def _convert_to_mp4(self, input_path: str, output_path: str) -> None:
         """Convert a video to MP4 (H.264)."""
         try:
-            ffmpeg.input(input_path).output(
-                output_path, 
-                vcodec='libx264', 
-                crf=FFMPEG_CRF, 
-                preset=FFMPEG_PRESET
-            ).run(overwrite_output=True, capture_stdout=True, capture_stderr=True)
+            tracked_ffmpeg_run(ffmpeg.input(input_path).output(
+                output_path, vcodec='libx264', crf=FFMPEG_CRF, preset=FFMPEG_PRESET))
         except ffmpeg.Error as e:
             raise ConversionError(f"MP4 conversion failed: {str(e)}")
     
@@ -167,27 +152,18 @@ class VideoConverter(BaseConverter):
         try:
             output_ext = normalize_extension(os.path.splitext(output_path)[1])
             if output_ext == '.webm':
-                ffmpeg.input(input_path).output(
-                    output_path,
-                    vcodec='libvpx-vp9',
-                    crf=WEBM_CRF,
-                    b='0'
-                ).run(overwrite_output=True, capture_stdout=True, capture_stderr=True)
+                tracked_ffmpeg_run(ffmpeg.input(input_path).output(
+                    output_path, vcodec='libvpx-vp9', crf=WEBM_CRF, b='0'))
             else:
-                ffmpeg.input(input_path).output(
-                    output_path,
-                    vcodec='libx264',
-                    crf=FFMPEG_CRF,
-                    preset=FFMPEG_PRESET
-                ).run(overwrite_output=True, capture_stdout=True, capture_stderr=True)
-                
+                tracked_ffmpeg_run(ffmpeg.input(input_path).output(
+                    output_path, vcodec='libx264', crf=FFMPEG_CRF, preset=FFMPEG_PRESET))
         except ffmpeg.Error as e:
             raise ConversionError(f"GIF to video conversion failed: {str(e)}")
     
     def _get_video_fps(self, input_path: str) -> float:
         """Return the source video's frames-per-second, defaulting when unknown."""
         try:
-            probe = ffmpeg.probe(input_path)
+            probe = ffmpeg.probe(input_path, cmd=get_ffprobe_path())
             video_stream = next((stream for stream in probe['streams'] if stream['codec_type'] == 'video'), None)
             if video_stream and 'r_frame_rate' in video_stream:
                 fps_str = video_stream['r_frame_rate']
@@ -199,7 +175,7 @@ class VideoConverter(BaseConverter):
     def _get_video_codec(self, input_path: str) -> str:
         """Return the name of the source video's codec if detectable."""
         try:
-            probe = ffmpeg.probe(input_path)
+            probe = ffmpeg.probe(input_path, cmd=get_ffprobe_path())
             video_stream = next((stream for stream in probe['streams'] if stream['codec_type'] == 'video'), None)
             if video_stream and 'codec_name' in video_stream:
                 return video_stream['codec_name']

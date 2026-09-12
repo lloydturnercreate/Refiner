@@ -4,12 +4,13 @@ CustomTkinter-based UI with tabs for conversion and compression.
 
 import os
 import sys
+import time as _time
 import threading
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
 from PIL import Image
 
-from utils import normalize_extension, get_valid_output_formats, generate_output_filename, validate_file_path, convert_size
+from utils import normalize_extension, get_valid_output_formats, generate_output_filename, validate_file_path, convert_size, get_ffmpeg_path, get_ffprobe_path, kill_active_processes
 from converters import convert_file
 from compressors import compress_file, simulate_compression
 from logger import logger
@@ -19,14 +20,20 @@ from constants import (
     SURFACE_PRIMARY,
     SURFACE_SECONDARY,
     SURFACE_ELEVATED,
+    PREVIEW_BACKGROUND,
     TEXT_PRIMARY,
     TEXT_SECONDARY,
     TEXT_MUTED,
+    TEXT_INFO,
     ACCENT_PRIMARY,
     ACCENT_SECONDARY as ACCENT_HOVER,
     ACCENT_WARNING,
     BORDER_PRIMARY,
     BORDER_SECONDARY,
+    TAB_BG, TAB_SELECTED, TAB_UNSELECTED,
+    TAB_TEXT_ACTIVE, TAB_TEXT_INACTIVE,
+    GHOST_BG, GHOST_HOVER, GHOST_TEXT,
+    FONT_FAMILY,
     WINDOW_TITLE,
     WINDOW_SIZE,
     WINDOW_RESIZABLE,
@@ -63,6 +70,11 @@ _convert_anim_job = None
 _compress_anim_job = None
 _convert_anim_dir = [1]
 _compress_anim_dir = [1]
+_cancel_event = None
+_elapsed_job_convert = None
+_elapsed_job_compress = None
+_active_output_convert = None
+_active_output_compress = None
 root = None
 
 # Maps display label → file extension and vice versa
@@ -154,6 +166,7 @@ def update_conversion_label():
 
 def process_conversion():
     """Validate inputs and run file conversion on a background thread."""
+    global _cancel_event, _active_output_convert
     input_path = entry_input.get()
     output_path = entry_output.get()
     if not input_path or not output_path:
@@ -169,17 +182,25 @@ def process_conversion():
         messagebox.showerror("Error", "Converting to SVG is not supported.")
         return
 
+    _cancel_event = threading.Event()
+    _active_output_convert = output_path
     _set_convert_busy(True)
 
     def _run():
         logger.log_conversion_start(input_path, output_path)
         try:
             convert_file(input_path, output_path)
+            if _cancel_event.is_set():
+                root.after(0, lambda: _on_convert_done(None, None, None, None))
+                return
             logger.log_conversion_success(input_path, output_path)
             root.after(0, lambda: _on_convert_done(
                 True, os.path.basename(input_path), os.path.basename(output_path), None
             ))
         except Exception as e:
+            if _cancel_event.is_set():
+                root.after(0, lambda: _on_convert_done(None, None, None, None))
+                return
             logger.log_conversion_error(input_path, output_path, str(e))
             root.after(0, lambda err=str(e): _on_convert_done(False, None, None, err))
 
@@ -187,21 +208,46 @@ def process_conversion():
 
 
 def _set_convert_busy(busy: bool):
-    """Disable/enable the Convert button, label, and progress bar."""
+    """Toggle the Convert button between action and cancel states."""
     if busy:
-        convert_button.configure(text="Converting…", state="disabled")
-        _start_progress(progress_convert, _convert_anim_dir, "_convert_anim_job")
+        convert_button.configure(
+            text="Cancel", state="normal",
+            fg_color="transparent", hover_color=GHOST_HOVER,
+            text_color=TEXT_SECONDARY, border_width=1,
+            border_color=BORDER_SECONDARY, command=_cancel_convert,
+        )
+        progress_convert.set(0)
+        _start_elapsed(conversion_label, "_elapsed_job_convert")
     else:
-        convert_button.configure(text="Convert", state="normal")
-        _stop_progress(progress_convert, "_convert_anim_job")
+        convert_button.configure(
+            text="Convert", state="normal",
+            fg_color=ACCENT_PRIMARY, hover_color=ACCENT_HOVER,
+            text_color="#FFFFFF", border_width=0,
+            command=process_conversion,
+        )
+        _stop_elapsed("_elapsed_job_convert")
 
 
-def _on_convert_done(success: bool, input_name: str, output_name: str, error: str):
-    """Called on the main thread when a conversion finishes."""
+def _on_convert_done(success, input_name, output_name, error):
+    """Called on the main thread when a conversion finishes or is cancelled."""
+    global _active_output_convert
     _set_convert_busy(False)
+    if success is None:
+        # Cancelled — clean up partial output
+        if _active_output_convert and os.path.exists(_active_output_convert):
+            try:
+                os.unlink(_active_output_convert)
+            except OSError:
+                pass
+        conversion_label.configure(text="Cancelled")
+        _active_output_convert = None
+        return
+    _active_output_convert = None
     if success:
+        update_conversion_label()
         messagebox.showinfo("Success", f"Converted {input_name} to {output_name}")
     else:
+        update_conversion_label()
         messagebox.showerror("Error", f"Conversion failed: {error}")
 
 
@@ -323,7 +369,7 @@ def _render_preview(path: str, label_widget, pane_widget):
         elif ext in _VIDEO_EXTS:
             import subprocess, tempfile
             probe = subprocess.run(
-                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                [get_ffprobe_path(), "-v", "error", "-show_entries", "format=duration",
                  "-of", "default=noprint_wrappers=1:nokey=1", path],
                 capture_output=True, text=True
             )
@@ -337,7 +383,7 @@ def _render_preview(path: str, label_widget, pane_widget):
                 tmp_path = tf.name
 
             subprocess.run(
-                ["ffmpeg", "-y", "-ss", str(seek), "-i", path,
+                [get_ffmpeg_path(), "-y", "-ss", str(seek), "-i", path,
                  "-vframes", "1", "-q:v", "2", tmp_path],
                 capture_output=True
             )
@@ -417,6 +463,7 @@ def update_prediction():
 
 def process_compression():
     """Validate inputs and run compression on a background thread."""
+    global _cancel_event, _active_output_compress
     input_path = entry_input_comp.get()
     output_path = entry_output_comp.get()
     compression_level = slider_comp.get()
@@ -431,12 +478,17 @@ def process_compression():
     is_gif = normalize_extension(os.path.splitext(input_path)[1]) == ".gif"
     target_fps = int(fps_slider.get()) if is_gif else None
 
+    _cancel_event = threading.Event()
+    _active_output_compress = output_path
     _set_compress_busy(True)
 
     def _run():
         logger.log_compression_start(input_path, output_path, int(compression_level))
         try:
             compress_file(input_path, output_path, compression_level, target_fps)
+            if _cancel_event.is_set():
+                root.after(0, lambda: _on_compress_done(None, None, None, None))
+                return
             original_size = os.path.getsize(input_path)
             compressed_size = os.path.getsize(output_path)
             logger.log_compression_success(input_path, output_path, original_size, compressed_size)
@@ -444,6 +496,9 @@ def process_compression():
                 True, os.path.basename(input_path), os.path.basename(output_path), None
             ))
         except Exception as e:
+            if _cancel_event.is_set():
+                root.after(0, lambda: _on_compress_done(None, None, None, None))
+                return
             logger.log_compression_error(input_path, output_path, str(e))
             root.after(0, lambda err=str(e): _on_compress_done(False, None, None, err))
 
@@ -451,21 +506,45 @@ def process_compression():
 
 
 def _set_compress_busy(busy: bool):
-    """Disable/enable the Compress button, label, and progress bar."""
+    """Toggle the Compress button between action and cancel states."""
     if busy:
-        compress_button.configure(text="Compressing…", state="disabled")
-        _start_progress(progress_compress, _compress_anim_dir, "_compress_anim_job")
+        compress_button.configure(
+            text="Cancel", state="normal",
+            fg_color="transparent", hover_color=GHOST_HOVER,
+            text_color=TEXT_SECONDARY, border_width=1,
+            border_color=BORDER_SECONDARY, command=_cancel_compress,
+        )
+        progress_compress.set(0)
+        _start_elapsed(label_predicted, "_elapsed_job_compress")
     else:
-        compress_button.configure(text="Compress", state="normal")
-        _stop_progress(progress_compress, "_compress_anim_job")
+        compress_button.configure(
+            text="Compress", state="normal",
+            fg_color=ACCENT_PRIMARY, hover_color=ACCENT_HOVER,
+            text_color="#FFFFFF", border_width=0,
+            command=process_compression,
+        )
+        _stop_elapsed("_elapsed_job_compress")
 
 
-def _on_compress_done(success: bool, input_name: str, output_name: str, error: str):
-    """Called on the main thread when a compression finishes."""
+def _on_compress_done(success, input_name, output_name, error):
+    """Called on the main thread when a compression finishes or is cancelled."""
+    global _active_output_compress
     _set_compress_busy(False)
+    if success is None:
+        if _active_output_compress and os.path.exists(_active_output_compress):
+            try:
+                os.unlink(_active_output_compress)
+            except OSError:
+                pass
+        label_predicted.configure(text="Cancelled")
+        _active_output_compress = None
+        return
+    _active_output_compress = None
     if success:
+        schedule_prediction_update()
         messagebox.showinfo("Success", f"Compressed {input_name} to {output_name}")
     else:
+        schedule_prediction_update()
         messagebox.showerror("Error", f"Compression failed: {error}")
 
 
@@ -500,6 +579,45 @@ def _stop_progress(bar, job_global: str):
     bar.set(0)
 
 
+def _start_elapsed(label_widget, job_attr):
+    """Show a running elapsed timer on label_widget."""
+    start = _time.monotonic()
+    this = sys.modules[__name__]
+
+    def _tick():
+        elapsed = _time.monotonic() - start
+        mins = int(elapsed) // 60
+        secs = int(elapsed) % 60
+        label_widget.configure(text=f"Elapsed {mins}:{secs:02d}")
+        setattr(this, job_attr, root.after(1000, _tick))
+
+    _tick()
+
+
+def _stop_elapsed(job_attr):
+    """Stop the elapsed timer."""
+    this = sys.modules[__name__]
+    job = getattr(this, job_attr, None)
+    if job is not None:
+        root.after_cancel(job)
+        setattr(this, job_attr, None)
+
+
+def _cancel_convert():
+    """Cancel the current conversion."""
+    global _cancel_event
+    if _cancel_event:
+        _cancel_event.set()
+    kill_active_processes()
+
+
+def _cancel_compress():
+    """Cancel the current compression."""
+    global _cancel_event
+    if _cancel_event:
+        _cancel_event.set()
+    kill_active_processes()
+
 
 class MainApplication:
     def __init__(self):
@@ -526,16 +644,14 @@ class MainApplication:
         topbar = ctk.CTkFrame(container, fg_color="transparent")
         topbar.pack(fill="x", pady=(20, 0))
 
-        logo_image = self._load_logo()
-        if logo_image:
-            self._logo_ref = logo_image
-            ctk.CTkLabel(topbar, image=logo_image, text="",
-                         fg_color="transparent").pack(side="left")
-        else:
-            ctk.CTkLabel(topbar, text="Refiner",
-                         font=("Helvetica Neue", 18, "bold"),
-                         text_color=TEXT_PRIMARY,
-                         fg_color="transparent").pack(side="left")
+        logo_icon = self._create_logo_icon()
+        self._logo_icon_ref = logo_icon
+        ctk.CTkLabel(topbar, image=logo_icon, text="",
+                     fg_color="transparent").pack(side="left", padx=(0, 7))
+        ctk.CTkLabel(topbar, text="Refiner",
+                     font=(FONT_FAMILY, 14, "bold"),
+                     text_color=TEXT_PRIMARY,
+                     fg_color="transparent").pack(side="left")
 
         # Tab content frames — swapped in/out on selection
         converter_frame = ctk.CTkFrame(container, fg_color="transparent", corner_radius=0)
@@ -557,31 +673,32 @@ class MainApplication:
             topbar,
             values=_tab_values,
             command=_switch_tab,
-            height=36, corner_radius=3,
-            fg_color=BG_SECONDARY,
-            selected_color=ACCENT_PRIMARY,
-            selected_hover_color=ACCENT_HOVER,
-            unselected_color=BG_SECONDARY,
+            height=30, corner_radius=6,
+            fg_color=TAB_BG,
+            selected_color=TAB_SELECTED,
+            selected_hover_color=SURFACE_ELEVATED,
+            unselected_color=TAB_UNSELECTED,
             unselected_hover_color=SURFACE_ELEVATED,
-            font=("Helvetica Neue", 13, "bold"),
-            text_color=TEXT_PRIMARY,
-            text_color_disabled=TEXT_MUTED,
+            font=(FONT_FAMILY, 12),
+            text_color=TAB_TEXT_ACTIVE,
+            text_color_disabled=TAB_TEXT_INACTIVE,
         ).pack(side="right")
 
         # Show converter tab initially
         converter_frame.pack(fill="both", expand=True, pady=(14, 0))
 
         # ── Shared styles ─────────────────────────────────────────────────
-        CARD   = dict(corner_radius=3, fg_color=SURFACE_PRIMARY, border_width=0)
+        CARD   = dict(corner_radius=0, fg_color=BG_PRIMARY, border_width=0)
         SEP    = dict(height=1, fg_color=BORDER_PRIMARY, corner_radius=0)
-        LBL    = dict(font=("Helvetica Neue", 15), text_color=TEXT_SECONDARY, width=100, anchor="w")
-        ENTRY  = dict(height=40, border_width=0, corner_radius=3,
+        LBL    = dict(font=(FONT_FAMILY, 12), text_color=TEXT_SECONDARY, width=76, anchor="w")
+        ENTRY  = dict(height=32, border_width=0, corner_radius=4,
                       fg_color=SURFACE_SECONDARY, text_color=TEXT_PRIMARY,
-                      font=("Helvetica Neue", 15))
-        BTN    = dict(text="Browse", width=76, height=34, corner_radius=3,
-                      fg_color=SURFACE_ELEVATED, hover_color=BORDER_SECONDARY,
-                      text_color=TEXT_PRIMARY, font=("Helvetica Neue", 13), border_width=0)
-        ACTION = dict(font=("Helvetica Neue", 16, "bold"), height=50, corner_radius=3,
+                      font=(FONT_FAMILY, 13))
+        BTN    = dict(text="Browse", width=62, height=26, corner_radius=4,
+                      fg_color=GHOST_BG, hover_color=GHOST_HOVER,
+                      text_color=GHOST_TEXT, font=(FONT_FAMILY, 11),
+                      border_width=1, border_color=BORDER_SECONDARY)
+        ACTION = dict(font=(FONT_FAMILY, 14, "bold"), height=40, corner_radius=8,
                       fg_color=ACCENT_PRIMARY, hover_color=ACCENT_HOVER,
                       text_color="#FFFFFF", border_width=0)
 
@@ -596,19 +713,19 @@ class MainApplication:
 
         def _row(card, row_idx, label, widget, has_browse=False, browse_cmd=None):
             ctk.CTkLabel(card, text=label, **LBL).grid(
-                row=row_idx, column=0, padx=(18, 0), pady=16, sticky="w")
+                row=row_idx, column=0, padx=(18, 0), pady=12, sticky="w")
             if has_browse:
-                widget.grid(row=row_idx, column=1, sticky="ew", padx=(0, 8), pady=16)
+                widget.grid(row=row_idx, column=1, sticky="ew", padx=(0, 8), pady=12)
                 ctk.CTkButton(card, command=browse_cmd, **BTN).grid(
-                    row=row_idx, column=2, padx=(0, 16), pady=16)
+                    row=row_idx, column=2, padx=(0, 16), pady=12)
             else:
                 widget.grid(row=row_idx, column=1, columnspan=2, sticky="ew",
-                            padx=(0, 16), pady=16)
+                            padx=(0, 16), pady=12)
 
         # ── CONVERTER TAB ─────────────────────────────────────────────────
         ct = converter_frame
 
-        preview_pane_conv = ctk.CTkFrame(ct, fg_color=SURFACE_PRIMARY, corner_radius=3, height=0)
+        preview_pane_conv = ctk.CTkFrame(ct, fg_color=PREVIEW_BACKGROUND, corner_radius=8, height=0)
         preview_pane_conv.pack_propagate(False)
         preview_pane_conv.pack(fill="x", pady=0)
         preview_label_conv = ctk.CTkLabel(preview_pane_conv, text="", fg_color="transparent")
@@ -624,10 +741,10 @@ class MainApplication:
 
         format_dropdown = ctk.CTkOptionMenu(
             cv, values=["—"], command=on_format_changed,
-            height=40, corner_radius=3,
-            fg_color=SURFACE_SECONDARY, button_color=ACCENT_PRIMARY,
-            button_hover_color=ACCENT_HOVER, text_color=TEXT_PRIMARY,
-            font=("Helvetica Neue", 15), state="disabled", anchor="w",
+            height=32, corner_radius=4,
+            fg_color=SURFACE_SECONDARY, button_color=SURFACE_SECONDARY,
+            button_hover_color=SURFACE_ELEVATED, text_color=TEXT_PRIMARY,
+            font=(FONT_FAMILY, 13), state="disabled", anchor="w",
         )
         _row(cv, 2, "Format", format_dropdown)
 
@@ -638,8 +755,8 @@ class MainApplication:
              browse_cmd=lambda: browse_output(entry_output))
 
         conversion_label = ctk.CTkLabel(
-            ct, text="—", font=("Helvetica Neue", 12),
-            text_color=TEXT_MUTED, fg_color="transparent",
+            ct, text="—", font=(FONT_FAMILY, 11),
+            text_color=TEXT_INFO, fg_color="transparent",
         )
         conversion_label.pack(pady=(12, 0))
 
@@ -648,15 +765,15 @@ class MainApplication:
         convert_button.pack(fill="x", pady=(8, 0))
 
         progress_convert = ctk.CTkProgressBar(
-            ct, height=3, corner_radius=3,
-            fg_color=BG_PRIMARY, progress_color=ACCENT_PRIMARY)
+            ct, height=2, corner_radius=1,
+            fg_color=BORDER_PRIMARY, progress_color=ACCENT_PRIMARY)
         progress_convert.set(0)
         progress_convert.pack(fill="x", pady=(5, 0))
 
         # ── COMPRESSOR TAB ────────────────────────────────────────────────
         cpt = compressor_frame
 
-        preview_pane_comp = ctk.CTkFrame(cpt, fg_color=SURFACE_PRIMARY, corner_radius=3, height=0)
+        preview_pane_comp = ctk.CTkFrame(cpt, fg_color=PREVIEW_BACKGROUND, corner_radius=8, height=0)
         preview_pane_comp.pack_propagate(False)
         preview_pane_comp.pack(fill="x", pady=0)
         preview_label_comp = ctk.CTkLabel(preview_pane_comp, text="", fg_color="transparent")
@@ -670,20 +787,19 @@ class MainApplication:
 
         _sep(cp, 1)
 
-        # Compression slider row — built inline as it has two sub-widgets
         ctk.CTkLabel(cp, text="Compression", **LBL).grid(
-            row=2, column=0, padx=(18, 0), pady=16, sticky="w")
+            row=2, column=0, padx=(18, 0), pady=12, sticky="w")
         slider_row = ctk.CTkFrame(cp, fg_color="transparent")
         slider_row.grid(row=2, column=1, columnspan=2, sticky="ew",
-                        padx=(0, 16), pady=16)
+                        padx=(0, 16), pady=12)
         slider_row.columnconfigure(0, weight=1)
 
         slider_comp = ctk.CTkSlider(
             slider_row, from_=0, to=100, number_of_steps=100,
             command=lambda val: schedule_prediction_update(),
-            height=14, button_color=ACCENT_PRIMARY,
-            button_hover_color=ACCENT_HOVER,
-            progress_color=ACCENT_PRIMARY, fg_color=SURFACE_ELEVATED,
+            height=14, button_color="#FFFFFF",
+            button_hover_color="#E8E8E8",
+            progress_color=ACCENT_PRIMARY, fg_color=SURFACE_SECONDARY,
         )
         slider_comp.set(50)
         slider_comp.grid(row=0, column=0, sticky="ew", padx=(0, 10))
@@ -691,8 +807,8 @@ class MainApplication:
 
         slider_level_label = ctk.CTkLabel(
             slider_row, text="50%",
-            font=("Helvetica Neue", 14, "bold"),
-            text_color=TEXT_PRIMARY, width=42, anchor="e",
+            font=(FONT_FAMILY, 12, "bold"),
+            text_color=TEXT_PRIMARY, width=34, anchor="e",
         )
         slider_level_label.grid(row=0, column=1)
 
@@ -702,12 +818,12 @@ class MainApplication:
         fps_row_sep.grid_remove()
 
         fps_row_label = ctk.CTkLabel(cp, text="GIF FPS", **LBL)
-        fps_row_label.grid(row=4, column=0, padx=(18, 0), pady=16, sticky="w")
+        fps_row_label.grid(row=4, column=0, padx=(18, 0), pady=12, sticky="w")
         fps_row_label.grid_remove()
 
         fps_row_frame = ctk.CTkFrame(cp, fg_color="transparent")
         fps_row_frame.grid(row=4, column=1, columnspan=2, sticky="ew",
-                           padx=(0, 16), pady=16)
+                           padx=(0, 16), pady=12)
         fps_row_frame.columnconfigure(0, weight=1)
         fps_row_frame.grid_remove()
 
@@ -716,29 +832,29 @@ class MainApplication:
             command=lambda val: [fps_level_label.configure(text=f"{int(val)} fps"),
                                  schedule_prediction_update()],
             height=14, state="disabled",
-            button_color=ACCENT_PRIMARY, button_hover_color=ACCENT_HOVER,
-            progress_color=ACCENT_PRIMARY, fg_color=SURFACE_ELEVATED,
+            button_color="#FFFFFF", button_hover_color="#E8E8E8",
+            progress_color=ACCENT_PRIMARY, fg_color=SURFACE_SECONDARY,
         )
         fps_slider.set(15)
         fps_slider.grid(row=0, column=0, sticky="ew", padx=(0, 10))
 
         fps_level_label = ctk.CTkLabel(
             fps_row_frame, text="15 fps",
-            font=("Helvetica Neue", 14, "bold"),
-            text_color=TEXT_PRIMARY, width=52, anchor="e",
+            font=(FONT_FAMILY, 12, "bold"),
+            text_color=TEXT_PRIMARY, width=46, anchor="e",
         )
         fps_level_label.grid(row=0, column=1)
 
         _sep(cp, 5)
 
         ctk.CTkLabel(cp, text="Predicted", **LBL).grid(
-            row=6, column=0, padx=(18, 0), pady=16, sticky="w")
+            row=6, column=0, padx=(18, 0), pady=12, sticky="w")
         label_predicted = ctk.CTkLabel(
-            cp, text="—", font=("Helvetica Neue", 15),
+            cp, text="—", font=(FONT_FAMILY, 13, "bold"),
             text_color=ACCENT_WARNING, anchor="w",
         )
         label_predicted.grid(row=6, column=1, columnspan=2, sticky="ew",
-                             padx=(0, 16), pady=16)
+                             padx=(0, 16), pady=12)
 
         _sep(cp, 7)
 
@@ -748,11 +864,11 @@ class MainApplication:
 
         compress_button = ctk.CTkButton(cpt, text="Compress",
                                         command=process_compression, **ACTION)
-        compress_button.pack(fill="x", pady=(16, 0))
+        compress_button.pack(fill="x", pady=(12, 0))
 
         progress_compress = ctk.CTkProgressBar(
-            cpt, height=3, corner_radius=3,
-            fg_color=BG_PRIMARY, progress_color=ACCENT_PRIMARY)
+            cpt, height=2, corner_radius=1,
+            fg_color=BORDER_PRIMARY, progress_color=ACCENT_PRIMARY)
         progress_compress.set(0)
         progress_compress.pack(fill="x", pady=(5, 0))
 
@@ -769,21 +885,23 @@ class MainApplication:
             base = os.path.dirname(os.path.abspath(__file__))
         return os.path.join(base, "assets", *parts)
 
-    def _load_logo(self, max_height: int = 22):
-        """Return a proportionally-scaled CTkImage from assets/logo.png if it exists."""
-        candidates = ["logo.png", "icon.png"]
-        for name in candidates:
-            path = self._assets_path(name)
-            if os.path.exists(path):
-                try:
-                    img = Image.open(path).convert("RGBA")
-                    w, h = img.size
-                    scale = max_height / h
-                    display_size = (max(1, int(w * scale)), max_height)
-                    return ctk.CTkImage(light_image=img, dark_image=img, size=display_size)
-                except Exception:
-                    pass
-        return None
+    @staticmethod
+    def _create_logo_icon(display_size=16):
+        """Draw the 4-square grid mark at 2x for Retina, return a CTkImage."""
+        from PIL import ImageDraw
+        s = display_size * 2
+        img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        sq = round(s * 6.5 / 16)
+        gap = round(s * 9.5 / 16)
+        r = round(s * 1.5 / 16)
+        full = (255, 102, 0, 255)
+        dim = (255, 102, 0, 77)
+        draw.rounded_rectangle([(0, 0), (sq, sq)], radius=r, fill=full)
+        draw.rounded_rectangle([(gap, 0), (gap + sq, sq)], radius=r, fill=full)
+        draw.rounded_rectangle([(0, gap), (sq, gap + sq)], radius=r, fill=full)
+        draw.rounded_rectangle([(gap, gap), (gap + sq, gap + sq)], radius=r, fill=dim)
+        return ctk.CTkImage(light_image=img, dark_image=img, size=(display_size, display_size))
 
     def _set_window_icon(self):
         """Apply a window icon (dock/taskbar) from assets/ if available."""

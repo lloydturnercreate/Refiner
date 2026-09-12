@@ -4,8 +4,104 @@ Utility helpers for file extensions, sizes, and validation.
 
 import os
 import math
+import shutil
+import subprocess
+import threading
 from typing import Optional
 from constants import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, AVAILABLE_FORMATS
+
+_COMMON_PATHS = [
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/usr/bin",
+]
+
+
+def _find_binary(name: str) -> str:
+    found = shutil.which(name)
+    if found:
+        return found
+    for d in _COMMON_PATHS:
+        p = os.path.join(d, name)
+        if os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+    return name
+
+
+def get_ffmpeg_path() -> str:
+    return _find_binary("ffmpeg")
+
+
+def get_ffprobe_path() -> str:
+    return _find_binary("ffprobe")
+
+
+def get_pngquant_path() -> str:
+    return _find_binary("pngquant")
+
+
+# ── Process tracking for cancellation ─────────────────────────────────
+_active_procs = []
+_proc_lock = threading.Lock()
+
+
+def register_process(proc):
+    with _proc_lock:
+        _active_procs.append(proc)
+
+
+def unregister_process(proc):
+    with _proc_lock:
+        try:
+            _active_procs.remove(proc)
+        except ValueError:
+            pass
+
+
+def kill_active_processes():
+    with _proc_lock:
+        for proc in list(_active_procs):
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+
+def tracked_run(args, *, check=False, capture_output=False, timeout=None, **kwargs):
+    """subprocess.run replacement that registers the process for cancellation."""
+    if capture_output:
+        kwargs.setdefault('stdout', subprocess.PIPE)
+        kwargs.setdefault('stderr', subprocess.PIPE)
+    proc = subprocess.Popen(args, **kwargs)
+    register_process(proc)
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.communicate()
+        raise
+    finally:
+        unregister_process(proc)
+    if check and proc.returncode != 0:
+        raise subprocess.CalledProcessError(proc.returncode, args, output=stdout, stderr=stderr)
+    return subprocess.CompletedProcess(args, proc.returncode, stdout, stderr)
+
+
+def tracked_ffmpeg_run(stream, cmd=None):
+    """Run an ffmpeg-python stream with process tracking for cancellation."""
+    import ffmpeg as _ffmpeg
+    proc = stream.run_async(
+        cmd=cmd or get_ffmpeg_path(),
+        pipe_stdout=True, pipe_stderr=True,
+        overwrite_output=True,
+    )
+    register_process(proc)
+    try:
+        stdout, stderr = proc.communicate()
+    finally:
+        unregister_process(proc)
+    if proc.returncode != 0:
+        raise _ffmpeg.Error('ffmpeg', stdout, stderr)
 
 
 def normalize_extension(ext: str) -> str:

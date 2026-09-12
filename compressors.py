@@ -12,7 +12,7 @@ import ffmpeg
 from constants import (
     IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, COMPRESSION_QUALITY_RANGE
 )
-from utils import normalize_extension
+from utils import normalize_extension, get_ffmpeg_path, get_ffprobe_path, get_pngquant_path, tracked_run, tracked_ffmpeg_run
 
 
 class CompressionError(Exception):
@@ -81,8 +81,8 @@ class ImageCompressor(BaseCompressor):
         """Compress PNG via pngquant when available, otherwise Pillow optimize."""
         try:
             q_min, q_max = self._calculate_png_quality_range(compression_level)
-            subprocess.run([
-                "pngquant", f"--quality={q_min}-{q_max}", "--force",
+            tracked_run([
+                get_pngquant_path(), f"--quality={q_min}-{q_max}", "--force",
                 "--output", output_path, input_path
             ], check=True, capture_output=True, timeout=30)
         except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
@@ -138,8 +138,8 @@ class ImageCompressor(BaseCompressor):
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
                 tmp_name = tmp.name
             
-            subprocess.run([
-                "pngquant", f"--quality={q_min}-{q_max}", "--force", 
+            tracked_run([
+                get_pngquant_path(), f"--quality={q_min}-{q_max}", "--force",
                 "--output", tmp_name, input_path
             ], check=True, capture_output=True, timeout=30)
             
@@ -188,7 +188,7 @@ class VideoCompressor(BaseCompressor):
             return
         
         try:
-            probe = ffmpeg.probe(input_path)
+            probe = ffmpeg.probe(input_path, cmd=get_ffprobe_path())
             duration = float(probe['format']['duration'])
         except Exception as e:
             raise CompressionError(f"Failed to get video duration: {str(e)}")
@@ -200,10 +200,8 @@ class VideoCompressor(BaseCompressor):
         target_bitrate_str = f"{int(target_bitrate/1000)}k"
         
         try:
-            ffmpeg.input(input_path).output(
-                output_path, 
-                b=target_bitrate_str
-            ).run(overwrite_output=True, capture_stdout=True, capture_stderr=True)
+            tracked_ffmpeg_run(ffmpeg.input(input_path).output(
+                output_path, b=target_bitrate_str))
         except ffmpeg.Error as e:
             raise CompressionError(f"Video compression failed: {str(e)}")
     
@@ -222,8 +220,8 @@ class VideoCompressor(BaseCompressor):
                 f"[s1][p]paletteuse=dither=bayer:bayer_scale=5"
             )
 
-            subprocess.run(
-                ["ffmpeg", "-i", input_path, "-vf", vf, "-loop", "0", "-y", output_path],
+            tracked_run(
+                [get_ffmpeg_path(), "-i", input_path, "-vf", vf, "-loop", "0", "-y", output_path],
                 check=True, capture_output=True, timeout=120,
             )
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
@@ -256,7 +254,7 @@ class VideoCompressor(BaseCompressor):
         """Return source video/GIF frames-per-second via ffprobe."""
         try:
             from fractions import Fraction
-            probe = ffmpeg.probe(input_path)
+            probe = ffmpeg.probe(input_path, cmd=get_ffprobe_path())
             stream = next((s for s in probe['streams'] if s['codec_type'] == 'video'), None)
             if stream and 'r_frame_rate' in stream:
                 return float(Fraction(stream['r_frame_rate']))
