@@ -32,3 +32,9 @@ Thumbs.db
 
 # Cursor
 .claude/
+
+# Design scratch + local builds
+*.dc.html
+canvas.json
+refiner-redesign.html
+Refiner-macOS.zip
